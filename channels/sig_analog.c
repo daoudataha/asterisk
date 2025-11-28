@@ -2421,6 +2421,8 @@ static void *__analog_ss_thread(void *data)
 		}
 		while (len < AST_MAX_EXTENSION-1) {
 			int is_exten_parking = 0;
+			int is_lastnumredial = 0;
+			int is_endofdialing = 0;
 
 			/* Read digit unless it's supposed to be immediate, in which case the
 			   only answer is 's' */
@@ -2437,8 +2439,27 @@ static void *__analog_ss_thread(void *data)
 				goto quit;
 			} else if (res) {
 				ast_debug(1,"waitfordigit returned '%c' (%d), timeout = %d\n", res, res, timeout);
-				exten[len++]=res;
+				exten[len++] = res;
 				exten[len] = '\0';
+				if (len > 1 && res == '#' && !ast_exists_extension(chan, ast_channel_context(chan), exten, 1, p->cid_num)) {
+					/* The user was dialing something that matched, but as soon as he dialed #, we no longer have a match.
+					 * Check if what was dialed immediately prior to the # is an extension that exists.
+					 * If so, we can treat "#" as the end of dialing terminator to allow user to complete the call without a timeout.
+					 * This is fully compatible with the user's dialplan, since we only do this if there isn't a dialplan match. */
+					exten[--len] = '\0'; /* Remove '#' from the buffer to test the extension without it */
+					if (ast_exists_extension(chan, ast_channel_context(chan), exten, 1, p->cid_num)) {
+						/* The number dialed prior to the # exists as a valid extension.
+						 * Since the number with # does not exist, treat # as end of dialing. */
+						ast_debug(1, "Interpreting '#' as end of dialing\n");
+						is_endofdialing = 1;
+					} else {
+						/* Even without the #, the number in the buffer is not a valid extension.
+						 * In this case, it's still invalid; do nothing special.
+						 * We simply reverse the removal of '#' from the buffer, i.e. we append it again. */
+						exten[len++] = res;
+						exten[len ] = '\0';
+					}
+				}
 			}
 			if (!ast_ignore_pattern(ast_channel_context(chan), exten)) {
 				analog_play_tone(p, idx, -1);
@@ -2452,7 +2473,12 @@ static void *__analog_ss_thread(void *data)
 				/* Last Number Redial */
 				if (!ast_strlen_zero(p->lastexten)) {
 					ast_verb(4, "Redialing last number dialed on channel %d\n", p->channel);
+					analog_lock_private(p);
 					ast_copy_string(exten, p->lastexten, sizeof(exten));
+					analog_unlock_private(p);
+					/* If Last Number Redial was used, even if the user might normally be able to dial further
+					 * digits for the digits dialed, we should complete the call immediately without delay. */
+					is_lastnumredial = 1;
 				} else {
 					ast_verb(3, "Last Number Redial not possible on channel %d (no saved number)\n", p->channel);
 					res = analog_play_tone(p, idx, ANALOG_TONE_CONGESTION);
@@ -2462,11 +2488,13 @@ static void *__analog_ss_thread(void *data)
 				}
 			}
 			if (ast_exists_extension(chan, ast_channel_context(chan), exten, 1, p->cid_num) && !is_exten_parking) {
-				if (!res || !ast_matchmore_extension(chan, ast_channel_context(chan), exten, 1, p->cid_num)) {
+				if (!res || is_lastnumredial || is_endofdialing || !ast_matchmore_extension(chan, ast_channel_context(chan), exten, 1, p->cid_num)) {
 					if (getforward) {
 						/* Record this as the forwarding extension */
+						analog_lock_private(p);
 						ast_copy_string(p->call_forward, exten, sizeof(p->call_forward));
-						ast_verb(3, "Setting call forward to '%s' on channel %d\n", p->call_forward, p->channel);
+						analog_unlock_private(p);
+						ast_verb(3, "Setting call forward to '%s' on channel %d\n", exten, p->channel);
 						res = analog_play_tone(p, idx, ANALOG_TONE_DIALRECALL);
 						if (res) {
 							break;

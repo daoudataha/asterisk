@@ -174,7 +174,7 @@
 						to the specified destination and <emphasis>start</emphasis> execution at that location.</para>
 						<para>NOTE: Any channel variables you want the called channel to inherit from the caller channel must be
 						prefixed with one or two underbars ('_').</para>
-						<para>NOTE: Using this option from a GoSub() might not make sense as there would be no return points.</para>
+						<para>NOTE: Using this option from a Gosub() might not make sense as there would be no return points.</para>
 					</option>
 					<option name="h">
 						<para>Allow <emphasis>callee</emphasis> to hang up by pressing <literal>*</literal>.</para>
@@ -259,6 +259,10 @@
 				<para>Will run a gosub on the called party's channel (the queue member)
 				once the parties are connected.  The subroutine execution starts in the
 				named context at the s exten and priority 1.</para>
+				<note><para>Macro was removed in Asterisk 21 which resulted in an
+				argument ordering change. The upgrade notice was missed for this,
+				so a note is being made here to provide a record of the change
+				for users who have not upgraded yet.</para></note>
 			</parameter>
 			<parameter name="rule">
 				<para>Will cause the queue's defaultrule to be overridden by the rule specified.</para>
@@ -6701,7 +6705,15 @@ static void handle_local_optimization_begin(void *userdata, struct stasis_subscr
 	struct local_optimization *optimization;
 	unsigned int id;
 	SCOPED_AO2LOCK(lock, queue_data);
-
+	
+	if (!local_one || !local_two || !source) {
+		ast_debug(1, "Local optimization begin missing channel snapshots:%s%s%s\n",
+		!local_one ? " local_one," : "",
+		!local_two ? " local_two," : "", 
+		!source ? " source," : "");
+		return;
+	}
+	
 	if (queue_data->dying) {
 		return;
 	}
@@ -6942,7 +6954,7 @@ static int setup_stasis_subs(struct queue_ent *qe, struct ast_channel *peer, str
 			handle_blind_transfer, queue_data);
 	stasis_message_router_add(queue_data->bridge_router, ast_attended_transfer_type(),
 			handle_attended_transfer, queue_data);
-	stasis_message_router_set_default(queue_data->bridge_router,
+	stasis_message_router_add(queue_data->bridge_router, stasis_subscription_change_type(),
 			queue_bridge_cb, queue_data);
 
 	queue_data->channel_router = stasis_message_router_create_pool(ast_channel_topic_all());
@@ -6964,7 +6976,7 @@ static int setup_stasis_subs(struct queue_ent *qe, struct ast_channel *peer, str
 			handle_hangup, queue_data);
 	stasis_message_router_add(queue_data->channel_router, ast_channel_masquerade_type(),
 			handle_masquerade, queue_data);
-	stasis_message_router_set_default(queue_data->channel_router,
+	stasis_message_router_add(queue_data->channel_router, stasis_subscription_change_type(),
 			queue_channel_cb, queue_data);
 
 	return 0;
@@ -7123,7 +7135,7 @@ static void setup_mixmonitor(struct queue_ent *qe, const char *filename)
  * \param[in,out] tries the number of times we have tried calling queue members
  * \param[out] noption set if the call to Queue() has the 'n' option set.
  * \param[in] agi the agi passed as the fifth parameter to the Queue() application
- * \param[in] gosub the gosub passed as the seventh parameter to the Queue() application
+ * \param[in] gosub the gosub passed as the sixth parameter to the Queue() application
  * \param[in] ringing 1 if the 'r' option is set, otherwise 0
  */
 static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_args, char *announceoverride, const char *url, int *tries, int *noption, const char *agi, const char *gosub, int ringing)
@@ -10500,7 +10512,7 @@ static char *complete_queue(const char *line, const char *word, int pos, int sta
 	queue_iter = ao2_iterator_init(queues, 0);
 	while ((q = ao2_t_iterator_next(&queue_iter, "Iterate through queues"))) {
 		if (!strncasecmp(word, q->name, wordlen) && ++which > state
-			&& (!word_list_offset || !word_in_list(word_list, q->name))) {
+			&& (!word_list_offset || !word_list || !word_in_list(word_list, q->name))) {
 			ret = ast_strdup(q->name);
 			queue_t_unref(q, "Done with iterator");
 			break;

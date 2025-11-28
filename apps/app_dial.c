@@ -97,6 +97,7 @@
 				<para>If a second argument is specified, this controls the number of seconds we attempt to dial the specified devices
 				without receiving early media or ringing. If neither progress, ringing, nor voice frames have been received when this
 				timeout expires, the call will be treated as a CHANUNAVAIL. This can be used to skip destinations that may not be responsive.</para>
+				<para>The timeouts need not be whole numbers; both arguments accept fractional seconds.</para>
 			</parameter>
 			<parameter name="options" required="false">
 				<optionlist>
@@ -214,7 +215,7 @@
 					and <emphasis>start</emphasis> execution at that location.</para>
 					<para>NOTE: Any channel variables you want the called channel to inherit from the caller channel must be
 					prefixed with one or two underbars ('_').</para>
-					<para>NOTE: Using this option from a GoSub() might not make sense as there would be no return points.</para>
+					<para>NOTE: Using this option from a Gosub() might not make sense as there would be no return points.</para>
 				</option>
 				<option name="g">
 					<para>Proceed with dialplan execution at the next priority in the current extension if the
@@ -2934,22 +2935,23 @@ static int dial_exec_full(struct ast_channel *chan, const char *data, struct ast
 		to_answer = -1;
 		to_progress = -1;
 	} else {
+		double tmp;
 		char *anstimeout = strsep(&args.timeout, "^");
 		if (!ast_strlen_zero(anstimeout)) {
-			to_answer = atoi(anstimeout);
-			if (to_answer > 0) {
-				to_answer *= 1000;
+			if (sscanf(anstimeout, "%30lf", &tmp) == 1 && tmp > 0) {
+				to_answer = tmp * 1000;
+				ast_debug(3, "Dial timeout set to %d ms\n", to_answer);
 			} else {
-				ast_log(LOG_WARNING, "Invalid answer timeout specified: '%s'. Setting timeout to infinite\n", args.timeout);
+				ast_log(LOG_WARNING, "Invalid answer timeout specified: '%s'. Setting timeout to infinite\n", anstimeout);
 				to_answer = -1;
 			}
 		} else {
 			to_answer = -1;
 		}
 		if (!ast_strlen_zero(args.timeout)) {
-			to_progress = atoi(args.timeout);
-			if (to_progress > 0) {
-				to_progress *= 1000;
+			if (sscanf(args.timeout, "%30lf", &tmp) == 1 && tmp > 0) {
+				to_progress = tmp * 1000;
+				ast_debug(3, "Dial progress timeout set to %d ms\n", to_progress);
 			} else {
 				ast_log(LOG_WARNING, "Invalid progress timeout specified: '%s'. Setting timeout to infinite\n", args.timeout);
 				to_progress = -1;
